@@ -1,0 +1,148 @@
+const { app, BrowserWindow, ipcMain } = require('electron');
+const path = require('path');
+const { spawn } = require('child_process');
+
+let mainWindow = null;
+let pyProc = null;
+let currentSubtitle = '';
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1200,
+    height: 760,
+    minWidth: 980,
+    minHeight: 620,
+    title: 'Laserdisc Live Subtitles',
+    backgroundColor: '#070c1a',
+    alwaysOnTop: true,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js')
+    }
+  });
+
+  mainWindow.loadFile('index.html');
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+}
+
+function stopPython() {
+  if (pyProc) {
+    pyProc.kill('SIGTERM');
+    pyProc = null;
+  }
+}
+
+function parseOutputLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  try {
+    const evt = JSON.parse(trimmed);
+    if (evt.type === 'subtitle' && typeof evt.text === 'string') {
+      currentSubtitle = evt.text;
+      mainWindow?.webContents.send('subtitle:update', currentSubtitle);
+      return;
+    }
+    if (evt.type === 'status' && typeof evt.stage === 'string') {
+      mainWindow?.webContents.send('subtitle:status', evt.stage);
+      return;
+    }
+    if (evt.type === 'audio-level' && typeof evt.rms === 'number') {
+      mainWindow?.webContents.send('subtitle:audioLevel', evt);
+      return;
+    }
+  } catch (_) {
+    // Non-JSON lines are treated as diagnostics.
+  }
+
+  mainWindow?.webContents.send('subtitle:log', trimmed);
+}
+
+function startPython(config) {
+  stopPython();
+  mainWindow?.webContents.send('subtitle:status', 'starting');
+
+  const projectRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..');
+  const scriptPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'id_subtitle_deamon.py')
+    : path.join(projectRoot, 'id_subtitle_deamon.py');
+
+  if (!require('fs').existsSync(scriptPath)) {
+    mainWindow?.webContents.send('subtitle:log', `Missing Python script at: ${scriptPath}`);
+    return;
+  }
+
+  const args = [
+    scriptPath,
+    '--source-language', config.sourceLanguage,
+    '--chunk-seconds', String(config.chunkSeconds),
+    '--no-overlay',
+    '--emit-json'
+  ];
+
+  pyProc = spawn(config.pythonPath || 'python3', args, {
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      WHISPER_BIN: config.whisperBin,
+      MODEL_PATH: config.modelPath,
+      AUDIO_DEVICE: config.audioDevice,
+      MIN_AUDIO_RMS: String(config.minAudioRms || 250)
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  pyProc.stdout.setEncoding('utf8');
+  pyProc.stderr.setEncoding('utf8');
+
+  let stdoutBuffer = '';
+  pyProc.stdout.on('data', (chunk) => {
+    stdoutBuffer += chunk;
+    const lines = stdoutBuffer.split('\n');
+    stdoutBuffer = lines.pop() || '';
+    lines.forEach(parseOutputLine);
+  });
+
+  pyProc.stderr.on('data', (chunk) => {
+    const lines = chunk.split('\n').map((x) => x.trim()).filter(Boolean);
+    lines.forEach((line) => mainWindow?.webContents.send('subtitle:log', line));
+  });
+
+  pyProc.on('close', (code) => {
+    mainWindow?.webContents.send('subtitle:status', 'stopped');
+    mainWindow?.webContents.send('subtitle:log', `Python process exited with code ${code}`);
+    pyProc = null;
+  });
+}
+
+ipcMain.handle('subtitle:start', async (_, config) => {
+  startPython(config);
+  return { ok: true };
+});
+
+ipcMain.handle('subtitle:stop', async () => {
+  stopPython();
+  return { ok: true };
+});
+
+app.whenReady().then(() => {
+  createWindow();
+
+  app.on('activate', function () {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
+});
+
+app.on('window-all-closed', function () {
+  stopPython();
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});

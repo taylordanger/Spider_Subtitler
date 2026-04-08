@@ -1,0 +1,4 @@
+PyGObject>=3.36.0
+PyAudio>=0.2.11
+SpeechRecognition>=3.14.2
+Gstreamer>=1.18.0

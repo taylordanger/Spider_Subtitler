@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spider Subtitler</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="top-bar">
+        <h1>Spider Subtitler</h1>
+        <div class="mic-level">
+          <span id="micLevelText">Mic RMS: -- / --</span>
+          <div class="meter-track"><div id="micLevelFill" class="meter-fill"></div></div>
+        </div>
+        <div id="statusBadge" class="status-badge status-idle">idle</div>
+        <div class="controls">
+          <button id="startBtn">Start</button>
+          <button id="stopBtn" class="ghost">Stop</button>
+          <button id="theaterBtn" class="ghost">Theater Mode</button>
+        </div>
+      </header>
+
+      <section class="config-grid">
+        <label>Whisper Binary
+          <input id="whisperBin" placeholder="/Users/.../whisper.cpp/build/bin/whisper-cli" />
+        </label>
+        <label>Model Path
+          <input id="modelPath" placeholder="/Users/.../whisper.cpp/models/ggml-small.bin" />
+        </label>
+        <label>Audio Device
+          <input id="audioDevice" value=":0" />
+        </label>
+        <label>Language
+          <input id="sourceLanguage" value="ja" />
+        </label>
+        <label>Chunk Seconds
+          <input id="chunkSeconds" type="number" min="1" max="10" value="4" />
+        </label>
+        <label>Min Audio RMS
+          <input id="minAudioRms" type="number" min="50" max="5000" value="250" />
+        </label>
+        <label>Python Path
+          <input id="pythonPath" value="python3" />
+        </label>
+      </section>
+
+      <section class="subtitle-panel">
+        <div class="subtitle-label">Live Subtitle</div>
+        <div id="subtitleText" class="subtitle-text">Press Start to begin live translation...</div>
+      </section>
+
+      <section class="log-panel">
+        <div class="subtitle-label">Logs</div>
+        <pre id="logBox"></pre>
+      </section>
+    </div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
