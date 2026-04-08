@@ -31,6 +31,16 @@
         "zip"
       ],
       "category": "public.app-category.video"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Video"
+    },
+    "publish": {
+      "provider": "github",
+      "releaseType": "release"
     }
   },
   "devDependencies": {
