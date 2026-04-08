@@ -1,6 +1,16 @@
 # Spider Subtitler
 
-Real-time speech-to-subtitle tool powered by [whisper.cpp](https://github.com/ggerganov/whisper.cpp). Captures microphone audio in short chunks, transcribes and translates it (Japanese → English by default), and displays live subtitles — either overlaid on a video feed (Linux/GStreamer) or in an Electron GUI window (macOS/Linux).
+Real-time Japanese-to-English subtitle generation for the rest of us — specifically, the rest of us who own Japanese laserdiscs.
+
+The workflow is straightforward: open the app on your laptop, start your Japanese laserdisc (or any Japanese audio source, the software is not precious about it), and set your laptop near the TV so the microphone can pick up the audio. That's the entire setup. The app listens, transcribes, and displays English subtitles on your screen in real time. No cables, no capture cards, no dedicated hardware — just a laptop and a microphone pointed at whatever is making noise.
+
+Because it's just a laptop, it goes wherever you go. Living room, bedroom, a friend's place, a screening room, a suspiciously large walk-in closet — if there's a screen playing Japanese audio, Spider Subtitler will follow. It works with any TV or any space. It is, by design, portable.
+
+The subtitles appear in an Electron GUI window. For those watching from the couch — or from further away than is probably advisable — **Theater Mode** displays the subtitles in a large, high-contrast format readable from across the room. Sit back. Read from afar. Pretend you understood all along.
+
+Under the hood: [whisper.cpp](https://github.com/ggerganov/whisper.cpp) handles transcription and translation, a Python daemon handles audio capture and silence detection, and the Electron GUI handles users who find environment variables distressing. The software also filters out whisper's well-documented habit of spontaneously generating compliments and sign-offs when given silence — a quirk that is charming exactly once.
+
+The laserdisc format was discontinued in 2001. The market for this software is small. If you are in it, you are among friends.
 
 ## How it works
 
