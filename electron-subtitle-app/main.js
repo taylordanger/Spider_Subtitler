@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 
 let mainWindow = null;
@@ -86,7 +86,39 @@ function startPython(config) {
     '--emit-json'
   ];
 
-  pyProc = spawn(config.pythonPath || 'python3', args, {
+  // Determine a working python executable. Try configured path, env var, then common names.
+  const candidates = Array.from(new Set([
+    config.pythonPath,
+    process.env.PYTHON,
+    'python3',
+    'python',
+    'py'
+  ].filter(Boolean)));
+
+  let chosenPython = null;
+  for (const cand of candidates) {
+    try {
+      const res = spawnSync(cand, ['--version'], { env: process.env, stdio: 'ignore' });
+      if (!res.error) {
+        chosenPython = cand;
+        break;
+      }
+    } catch (_) {
+      // ignore and try next
+    }
+  }
+
+  if (!chosenPython) {
+    mainWindow?.webContents.send('subtitle:log', `Python executable not found. Tried: ${candidates.join(', ')}`);
+    mainWindow?.webContents.send('subtitle:status', 'stopped');
+    return;
+  }
+
+  if (chosenPython !== (config.pythonPath || 'python3')) {
+    mainWindow?.webContents.send('subtitle:log', `Using Python executable: ${chosenPython}`);
+  }
+
+  pyProc = spawn(chosenPython, args, {
     cwd: projectRoot,
     env: {
       ...process.env,
@@ -98,6 +130,13 @@ function startPython(config) {
       WHISPER_TIMEOUT: String(typeof config.whisperTimeout !== 'undefined' ? config.whisperTimeout : '30')
     },
     stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  pyProc.on('error', (err) => {
+    mainWindow?.webContents.send('subtitle:log', `Failed to start Python (${err && err.code}): ${err && err.message}`);
+    if (err && err.code === 'ENOENT') {
+      mainWindow?.webContents.send('subtitle:log', 'Python executable missing; check the Python path in settings.');
+    }
   });
 
   pyProc.stdout.setEncoding('utf8');
