@@ -38,6 +38,12 @@
         <label>Chunk Seconds
           <input id="chunkSeconds" type="number" min="1" max="10" value="4" />
         </label>
+        <label>Whisper Timeout (s)
+          <input id="whisperTimeout" type="number" min="5" max="300" value="30" />
+        </label>
+        <label>Speaker Similarity Threshold
+          <input id="resemblyThresh" type="number" step="0.01" min="0.50" max="0.95" value="0.72" />
+        </label>
         <label>Min Audio RMS
           <input id="minAudioRms" type="number" min="50" max="5000" value="250" />
         </label>
@@ -49,6 +55,22 @@
       <section class="subtitle-panel">
         <div class="subtitle-label">Live Subtitle</div>
         <div id="subtitleText" class="subtitle-text">Press Start to begin live translation...</div>
+        <div class="subtitle-label" style="margin-top:12px;">History
+          <div class="history-controls">
+            <button id="resetHistoryBtn" class="ghost">Reset</button>
+            <button id="saveSessionBtn" class="ghost">Save</button>
+          </div>
+        </div>
+        <div id="subtitleHistory" class="subtitle-history" aria-label="Subtitle history"></div>
+        <div class="subtitle-label" style="margin-top:8px;">SRT Matching
+          <div class="history-controls">
+            <button id="loadSrtBtn" class="ghost">Load SRT</button>
+            <input id="srtFileInput" type="file" accept=".srt" style="display:none" />
+            <label style="margin-left:8px">Match Threshold
+              <input id="srtThresh" type="number" step="0.05" min="0.3" max="1.0" value="0.7" />
+            </label>
+          </div>
+        </div>
       </section>
 
       <section class="log-panel">
