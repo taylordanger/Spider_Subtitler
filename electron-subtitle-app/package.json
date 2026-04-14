@@ -19,6 +19,7 @@
       "index.html",
       "styles.css"
     ],
+    "icon": "build/icons/icon",
     "extraResources": [
       {
         "from": "../id_subtitle_deamon.py",
