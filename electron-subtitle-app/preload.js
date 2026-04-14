@@ -7,4 +7,6 @@ contextBridge.exposeInMainWorld('subtitleApp', {
   onStatus: (handler) => ipcRenderer.on('subtitle:status', (_, status) => handler(status)),
   onAudioLevel: (handler) => ipcRenderer.on('subtitle:audioLevel', (_, payload) => handler(payload)),
   onLog: (handler) => ipcRenderer.on('subtitle:log', (_, line) => handler(line))
+  ,saveSession: (text) => ipcRenderer.invoke('subtitle:save', text)
+  ,onClearRequest: (handler) => ipcRenderer.on('subtitle:clear', () => handler())
 });
