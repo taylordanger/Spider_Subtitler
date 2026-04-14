@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
+const fs = require('fs');
 
 let mainWindow = null;
 let pyProc = null;
@@ -92,7 +93,9 @@ function startPython(config) {
       WHISPER_BIN: config.whisperBin,
       MODEL_PATH: config.modelPath,
       AUDIO_DEVICE: config.audioDevice,
-      MIN_AUDIO_RMS: String(config.minAudioRms || 250)
+      MIN_AUDIO_RMS: String(config.minAudioRms || 250),
+      RESEMBLY_SIM_THRESH: String(typeof config.resemblyThresh !== 'undefined' ? config.resemblyThresh : '0.72'),
+      WHISPER_TIMEOUT: String(typeof config.whisperTimeout !== 'undefined' ? config.whisperTimeout : '30')
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -128,6 +131,22 @@ ipcMain.handle('subtitle:start', async (_, config) => {
 ipcMain.handle('subtitle:stop', async () => {
   stopPython();
   return { ok: true };
+});
+
+ipcMain.handle('subtitle:save', async (_, text) => {
+  if (!mainWindow) return { ok: false, error: 'no-window' };
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save subtitles',
+    defaultPath: 'subtitles.txt',
+    filters: [{ name: 'Text', extensions: ['txt'] }]
+  });
+  if (canceled || !filePath) return { ok: false, canceled: true };
+  try {
+    fs.writeFileSync(filePath, String(text || ''), 'utf8');
+    return { ok: true, path: filePath };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 });
 
 app.whenReady().then(() => {
