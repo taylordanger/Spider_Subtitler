@@ -197,6 +197,24 @@ input {
   overflow: auto;
 }
 
+.subtitle-history {
+  margin-top: 8px;
+  background: rgba(0,0,0,0.65);
+  border-radius: 10px;
+  border: 1px solid #164923;
+  max-height: 130px;
+  overflow: auto;
+  padding: 8px 10px;
+  font-size: 0.95rem;
+  color: #bff6c8;
+}
+
+.subtitle-entry {
+  padding: 2px 0;
+  line-height: 1.2;
+  white-space: pre-wrap;
+}
+
 .log-panel {
   display: flex;
   flex-direction: column;
@@ -207,7 +225,8 @@ input {
   height: 100%;
   min-height: 80px;
   overflow: auto;
-  color: #000000;
+  color: #cfe8ff;
+  background: rgba(2,18,30,0.12);
   font-size: 0.8rem;
   white-space: pre-wrap;
 }
@@ -265,3 +284,4 @@ body.theater-mode .subtitle-text {
     0 3px 0 rgba(0, 0, 0, 0.45),
     0 12px 28px rgba(0, 0, 0, 0.55);
 }
+body.theater-mode .subtitle-history { display: none; }
