@@ -355,7 +355,7 @@ def record_and_transcribe(daemon: SubtitleDaemon, whisper_bin: str, model_path: 
     while True:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             wav_path = tmp.name
-        try:    
+        try:
             # record short chunk mono 16k (platform-aware)
             record_chunk_to_wav(wav_path, duration_sec=chunk_seconds)
         except (subprocess.CalledProcessError, RuntimeError) as e:
