@@ -10,6 +10,8 @@ const micLevelText = document.getElementById('micLevelText');
 const whisperBinInput = document.getElementById('whisperBin');
 const modelPathInput = document.getElementById('modelPath');
 const audioDeviceInput = document.getElementById('audioDevice');
+const audioPresetInput = document.getElementById('audioPreset');
+const listAudioBtn = document.getElementById('listAudioBtn');
 const sourceLanguageInput = document.getElementById('sourceLanguage');
 const chunkSecondsInput = document.getElementById('chunkSeconds');
 const minAudioRmsInput = document.getElementById('minAudioRms');
@@ -79,6 +81,12 @@ function loadConfig() {
     whisperBinInput.value = cfg.whisperBin || '';
     modelPathInput.value = cfg.modelPath || '';
     audioDeviceInput.value = cfg.audioDevice || ':0';
+    if (audioPresetInput) {
+      audioPresetInput.value = cfg.audioDevice || 'custom';
+      if (!Array.from(audioPresetInput.options).some((opt) => opt.value === audioPresetInput.value)) {
+        audioPresetInput.value = 'custom';
+      }
+    }
     sourceLanguageInput.value = cfg.sourceLanguage || 'ja';
     chunkSecondsInput.value = cfg.chunkSeconds || 4;
     minAudioRmsInput.value = cfg.minAudioRms || 250;
@@ -107,6 +115,50 @@ function getConfig() {
 function saveConfig(cfg) {
   localStorage.setItem(LS_KEY, JSON.stringify(cfg));
 }
+
+audioPresetInput?.addEventListener('change', () => {
+  const preset = audioPresetInput.value;
+  if (!preset || preset === 'custom') {
+    return;
+  }
+  audioDeviceInput.value = preset;
+  appendLog(`Audio preset applied: ${preset}`);
+});
+
+listAudioBtn?.addEventListener('click', async () => {
+  appendLog('Scanning audio capture devices...');
+  try {
+    const result = await window.subtitleApp.listAudioDevices();
+    if (!result || !result.ok) {
+      appendLog(`Audio device scan failed: ${result && result.error ? result.error : 'unknown error'}`);
+      return;
+    }
+
+    appendLog(`Platform: ${result.platform}`);
+    if (result.hint) {
+      appendLog(result.hint);
+    }
+
+    if (Array.isArray(result.audioInputs) && result.audioInputs.length) {
+      appendLog('Available audio inputs:');
+      result.audioInputs.forEach((input) => {
+        appendLog(`  :${input.index}  ${input.name}`);
+      });
+      appendLog('Set Audio Device to one of the :<index> values above.');
+      return;
+    }
+
+    if (Array.isArray(result.raw) && result.raw.length) {
+      appendLog('Raw device listing:');
+      result.raw.forEach((line) => appendLog(`  ${line}`));
+      return;
+    }
+
+    appendLog('No audio inputs found.');
+  } catch (err) {
+    appendLog(`Audio device scan error: ${err}`);
+  }
+});
 
 startBtn.addEventListener('click', async () => {
   const cfg = getConfig();

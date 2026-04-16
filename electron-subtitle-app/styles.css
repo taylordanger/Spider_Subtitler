@@ -167,6 +167,28 @@ input {
   padding: 9px 10px;
 }
 
+select {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid #17ff07;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+
+.audio-tools {
+  grid-column: span 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+}
+
+#audioHint {
+  font-size: 0.75rem;
+  color: #8bc89e;
+}
+
 .subtitle-panel,
 .log-panel {
   background: linear-gradient(180deg, var(--panel), var(--panel-2));
@@ -234,6 +256,12 @@ input {
 @media (max-width: 840px) {
   .config-grid {
     grid-template-columns: 1fr;
+  }
+
+  .audio-tools {
+    grid-column: span 1;
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

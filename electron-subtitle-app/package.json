@@ -41,6 +41,8 @@
     },
     "publish": {
       "provider": "github",
+      "owner": "darkstar",
+      "repo": "Spider_Subtitler",
       "releaseType": "release"
     }
   },

@@ -7,6 +7,89 @@ let mainWindow = null;
 let pyProc = null;
 let currentSubtitle = '';
 
+function listAudioDevices() {
+  const platform = process.platform;
+
+  if (platform === 'darwin') {
+    const ffmpegCandidates = [
+      process.env.FFMPEG_BIN,
+      '/opt/homebrew/bin/ffmpeg',
+      '/usr/local/bin/ffmpeg',
+      'ffmpeg'
+    ].filter(Boolean);
+
+    let ffmpegBin = ffmpegCandidates[ffmpegCandidates.length - 1];
+    for (const candidate of ffmpegCandidates) {
+      try {
+        const probe = spawnSync(candidate, ['-version'], { stdio: 'ignore' });
+        if (!probe.error) {
+          ffmpegBin = candidate;
+          break;
+        }
+      } catch (_) {
+        // Keep trying candidates.
+      }
+    }
+
+    const probe = spawnSync(
+      ffmpegBin,
+      ['-hide_banner', '-f', 'avfoundation', '-list_devices', 'true', '-i', ''],
+      { encoding: 'utf8' }
+    );
+
+    const stderr = String(probe.stderr || '');
+    const lines = stderr.split('\n').map((line) => line.trim()).filter(Boolean);
+    const audioInputs = [];
+
+    let inAudioSection = false;
+    for (const line of lines) {
+      if (line.includes('AVFoundation audio devices')) {
+        inAudioSection = true;
+        continue;
+      }
+      if (line.includes('AVFoundation video devices')) {
+        inAudioSection = false;
+        continue;
+      }
+
+      if (!inAudioSection) {
+        continue;
+      }
+
+      const match = line.match(/\[(\d+)\]\s+(.+)$/);
+      if (match) {
+        audioInputs.push({ index: match[1], name: match[2] });
+      }
+    }
+
+    return {
+      ok: true,
+      platform,
+      ffmpegBin,
+      audioInputs,
+      hint: 'Use AVFoundation audio selector format :<index> (example: :0, :1).'
+    };
+  }
+
+  if (platform === 'linux') {
+    const arecord = spawnSync('arecord', ['-l'], { encoding: 'utf8' });
+    const output = String(arecord.stdout || arecord.stderr || '');
+    const lines = output.split('\n').map((line) => line.trim()).filter(Boolean);
+    return {
+      ok: true,
+      platform,
+      raw: lines,
+      hint: 'Use ALSA format like plughw:<card>,<device>.'
+    };
+  }
+
+  return {
+    ok: false,
+    platform,
+    error: `Audio device listing is not implemented for ${platform}`
+  };
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -186,6 +269,14 @@ ipcMain.handle('subtitle:save', async (_, text) => {
     return { ok: true, path: filePath };
   } catch (err) {
     return { ok: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('subtitle:listAudioDevices', async () => {
+  try {
+    return listAudioDevices();
+  } catch (err) {
+    return { ok: false, error: String(err), platform: process.platform };
   }
 });
 

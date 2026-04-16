@@ -114,6 +114,23 @@ In the GUI's settings panel set:
 - Audio device and source language
 - Python executable path (`pythonPath`) — defaults to `python3`. If the app shows `spawn python ENOENT`, set this to the absolute Python path (for example `/usr/bin/python3`) because packaged apps may not inherit your shell PATH.
 
+### Using internal/system audio instead of microphone
+
+Yes, this is supported.
+
+- On macOS, audio capture uses ffmpeg AVFoundation selectors (`AUDIO_DEVICE` in format `:<index>`).
+- In the Electron app, click `List Audio Inputs` to print available input devices in Logs.
+- Set `Audio Device` to one of the listed indices (example: `:1`).
+
+For TV/system audio routing on macOS, use a virtual loopback device:
+
+1. Install BlackHole (or similar virtual audio driver).
+2. Open Audio MIDI Setup and create a Multi-Output Device (your speakers + BlackHole).
+3. Set your media output to that Multi-Output Device.
+4. In Spider Subtitler, choose the BlackHole input index via `List Audio Inputs`.
+
+This lets subtitles follow internal audio directly without relying on room loudness.
+
 The GUI launches the Python daemon with `--emit-json` so it can parse structured events.
 
 ### Packaging (macOS / Linux)

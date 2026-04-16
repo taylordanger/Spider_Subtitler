@@ -32,6 +32,18 @@
         <label>Audio Device
           <input id="audioDevice" value=":0" />
         </label>
+        <label>Audio Source Preset
+          <select id="audioPreset">
+            <option value="custom">Custom (manual)</option>
+            <option value=":0">macOS default input (:0)</option>
+            <option value=":1">macOS input #1 (:1)</option>
+            <option value=":2">macOS input #2 (:2)</option>
+          </select>
+        </label>
+        <div class="audio-tools">
+          <button id="listAudioBtn" class="ghost">List Audio Inputs</button>
+          <span id="audioHint">Tip: for internal audio on macOS, install BlackHole and set Multi-Output in Audio MIDI Setup.</span>
+        </div>
         <label>Language
           <input id="sourceLanguage" value="ja" />
         </label>

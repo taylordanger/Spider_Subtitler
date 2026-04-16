@@ -167,6 +167,55 @@ def should_skip_line(text: str, last_line_norm: str):
         "subscribe",
         "like and subscribe",
         "see you next time",
+        "Translated by Vortex",
+        "Please subscribe to my channel and like this video!",
+        "If you enjoyed this video, please subscribe to my channel and give it a high rating.",
+        "If you like this video, please subscribe to my channel.",
+        "If you enjoyed this video,",
+        "I'll see you in the next video.",
+        "Thank you very much for watching.",
+        "Thank you very much for watching!",
+        "Thank you for watching.",
+        "Thank you for watching!",
+        "If you enjoyed this video, please subscribe to my channel and like this video.",
+        "If you enjoyed this video, please subscribe to my channel and like this video!",
+        "That's all for this video. Thanks for watching.",
+        "That's all for this video. See you in the next one!",
+        "That's all for this video.",
+        "See you next time!",
+        "This is not the end of this video.",
+        "THE END",
+        "And that's it for today's video.",
+        "END",
+        "Please subscribe to my channel.",
+        "Please subscribe to my channel!",
+        "Please subscribe and like this video.",
+        "Please subscribe and like this video!",
+        "Please subscribe and like.",
+        "Please subscribe.",
+        "Subscribe to my channel.",
+        "Subscribe and like this video.",
+        "Subscribe and like.",
+        "Subscribe.",
+        "Don't forget to subscribe to my channel and like this video!",
+        "Don't forget to subscribe and like this video!",
+        "Don't forget to subscribe and like!",
+        "Don't forget to subscribe!",
+        "Don't forget to subscribe to my channel!",
+        "Don't forget to subscribe and like this video!",
+        "Don't forget to subscribe and like!",
+        "Don't forget to subscribe!",
+        "To be continued...",
+        "To be continued",
+        "Please like and subscribe to my channel.",
+        "Please like and subscribe to my channel!",
+        "Please like and subscribe.",
+        "Please like and subscribe!",
+        "Please like this video and subscribe to my channel.",
+        "Please like this video and subscribe to my channel!",
+        "Please like this video and subscribe.",
+        "Please like this video and subscribe!",
+        "Please like this video."
     }
     if norm in known_hallucinations:
         return True, norm
@@ -220,17 +269,17 @@ def get_audio_rms(wav_path: str):
         # If RMS calculation fails, do not block transcription.
         return float(MIN_RMS)
 
-
+# Simple energy-based filter to skip near-silent chunks and prevent hallucinations.
 def audio_has_speech_energy(wav_path: str, min_rms: int):
     return get_audio_rms(wav_path) >= min_rms
 
-
+# Emit a subtitle message. If emit_json is True, output a JSON line instead of plain text for better integration with external tools.
 def emit_subtitle(text: str, emit_json: bool):
     if emit_json:
         print(json.dumps({"type": "subtitle", "text": text}), flush=True)
         return
     print(text, flush=True)
-
+# Emit a status update. If emit_json is True, output a JSON line instead of plain text for better integration with external tools.
 
 def emit_status(stage: str, emit_json: bool):
     if emit_json:
@@ -238,7 +287,7 @@ def emit_status(stage: str, emit_json: bool):
         return
     print(f"[status] {stage}", flush=True)
 
-
+# Emit audio level information. If emit_json is True, output a JSON line instead of plain text for better integration with external tools.
 def emit_audio_level(rms: float, threshold: int, emit_json: bool):
     if emit_json:
         print(json.dumps({"type": "audio-level", "rms": round(rms, 2), "threshold": threshold}), flush=True)
@@ -306,7 +355,7 @@ def record_and_transcribe(daemon: SubtitleDaemon, whisper_bin: str, model_path: 
     while True:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             wav_path = tmp.name
-        try:
+        try:    
             # record short chunk mono 16k (platform-aware)
             record_chunk_to_wav(wav_path, duration_sec=chunk_seconds)
         except (subprocess.CalledProcessError, RuntimeError) as e:
