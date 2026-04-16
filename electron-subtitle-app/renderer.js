@@ -330,6 +330,10 @@ function stripYouTubeSayings(s) {
     "I'll see you in the next video.",
     "Thank you very much for watching.",
     "Thank you very much for watching!",
+    "Thank you for watching.",
+    "Thank you for watching!",
+    "If you enjoyed this video, please subscribe to my channel and like this video.",
+    "If you enjoyed this video, please subscribe to my channel and like this video!",
     "That's all for this video. Thanks for watching.",
     "That's all for this video. See you in the next one!",
     "That's all for this video.",
@@ -366,7 +370,8 @@ function stripYouTubeSayings(s) {
     "Please like this video and subscribe to my channel!",
     "Please like this video and subscribe.",
     "Please like this video and subscribe!",
-    "Please like this video.",
+    "Please like this video."
+    ,
   ];
   const escapeRegExp = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(phrases.map(escapeRegExp).join('|'), 'gi');
