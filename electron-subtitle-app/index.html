@@ -30,12 +30,13 @@
           <input id="modelPath" placeholder="/Users/.../whisper.cpp/models/ggml-small.bin" />
         </label>
         <label>Audio Device
-          <input id="audioDevice" value=":0" />
+          <input id="audioDevice" value="auto" />
         </label>
         <label>Audio Source Preset
           <select id="audioPreset">
             <option value="custom">Custom (manual)</option>
-            <option value=":0">macOS default input (:0)</option>
+            <option value="auto">macOS preferred input (auto)</option>
+            <option value=":0">macOS input #0 (:0)</option>
             <option value=":1">macOS input #1 (:1)</option>
             <option value=":2">macOS input #2 (:2)</option>
           </select>

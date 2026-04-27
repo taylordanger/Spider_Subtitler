@@ -31,7 +31,10 @@
         "dmg",
         "zip"
       ],
-      "category": "public.app-category.video"
+      "category": "public.app-category.video",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Spider Subtitler needs microphone access to capture live audio for subtitle translation."
+      }
     },
     "linux": {
       "target": [

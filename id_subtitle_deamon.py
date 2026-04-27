@@ -11,7 +11,9 @@ import json
 import wave
 import struct
 import math
-from typing import Any, cast
+import re
+from functools import lru_cache
+from typing import Any, Optional, cast
 
 IS_MACOS = platform.system() == "Darwin"
 
@@ -62,6 +64,93 @@ def resolve_ffmpeg_binary() -> str:
         "If installed, set FFMPEG_BIN to full path (example: /opt/homebrew/bin/ffmpeg)."
     )
 
+
+def list_mac_audio_inputs(ffmpeg_bin: str):
+    probe = subprocess.run(
+        [ffmpeg_bin, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    stderr = (probe.stderr or "")
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    audio_inputs = []
+    in_audio_section = False
+
+    for line in lines:
+        if "AVFoundation audio devices" in line:
+            in_audio_section = True
+            continue
+        if "AVFoundation video devices" in line:
+            in_audio_section = False
+            continue
+        if not in_audio_section:
+            continue
+
+        match = re.match(r".*\[(\d+)\]\s+(.+)$", line)
+        if match:
+            audio_inputs.append({"index": match.group(1), "name": match.group(2)})
+
+    return audio_inputs
+
+
+def choose_mac_audio_input(audio_inputs):
+    if not audio_inputs:
+        return None
+
+    preferred_patterns = [
+        re.compile(r"built[- ]?in", re.IGNORECASE),
+        re.compile(r"internal microphone", re.IGNORECASE),
+        re.compile(r"macbook.*microphone", re.IGNORECASE),
+    ]
+    excluded_patterns = [
+        re.compile(r"blackhole", re.IGNORECASE),
+        re.compile(r"loopback", re.IGNORECASE),
+        re.compile(r"capture screen", re.IGNORECASE),
+    ]
+
+    def is_excluded(name: str) -> bool:
+        return any(pattern.search(name) for pattern in excluded_patterns)
+
+    for device in audio_inputs:
+        name = device.get("name", "")
+        if name and not is_excluded(name) and any(pattern.search(name) for pattern in preferred_patterns):
+            return device
+
+    for device in audio_inputs:
+        name = device.get("name", "")
+        if name and not is_excluded(name):
+            return device
+
+    return audio_inputs[0]
+
+
+@lru_cache(maxsize=1)
+def get_effective_audio_device() -> str:
+    requested = (AUDIO_DEVICE or "").strip()
+    if not IS_MACOS:
+        return requested or AUDIO_DEVICE
+
+    ffmpeg_bin = resolve_ffmpeg_binary()
+    audio_inputs = list_mac_audio_inputs(ffmpeg_bin)
+
+    if requested and requested.lower() not in {"auto", "default", ":0"}:
+        # Respect explicit selectors when they still exist in current device list.
+        if re.match(r"^:\d+$", requested):
+            requested_index = requested[1:]
+            if any(str(device.get("index", "")) == requested_index for device in audio_inputs):
+                return requested
+            # Saved index is stale (devices reordered/removed), fall back to best pick.
+        else:
+            return requested
+
+    chosen = choose_mac_audio_input(audio_inputs)
+    if chosen and chosen.get("index") is not None:
+        return f":{chosen['index']}"
+
+    return requested or ":0"
+
 def get_pipe_desc() -> str:
     # GStreamer pipeline string (update font size/position as desired)
     if IS_MACOS:
@@ -78,11 +167,12 @@ def get_pipe_desc() -> str:
     )
 
 
-def record_chunk_to_wav(wav_path: str, duration_sec: int = 2):
+def record_chunk_to_wav(wav_path: str, duration_sec: int = 2, audio_device: Optional[str] = None):
     if IS_MACOS:
         ffmpeg_bin = resolve_ffmpeg_binary()
+        device_selector = audio_device or get_effective_audio_device()
 
-        # avfoundation audio-only input format is :<index>, ex: :0
+        # avfoundation audio-only input format is :<index>.
         ffmpeg_cmd = [
             ffmpeg_bin,
             "-hide_banner",
@@ -91,7 +181,7 @@ def record_chunk_to_wav(wav_path: str, duration_sec: int = 2):
             "-f",
             "avfoundation",
             "-i",
-            AUDIO_DEVICE,
+            device_selector,
             "-t",
             str(duration_sec),
             "-ac",
@@ -108,7 +198,7 @@ def record_chunk_to_wav(wav_path: str, duration_sec: int = 2):
             subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         except subprocess.CalledProcessError as e:
             err_text = (e.stderr or "").strip()
-            raise RuntimeError(f"ffmpeg capture failed for AUDIO_DEVICE={AUDIO_DEVICE}: {err_text}") from e
+            raise RuntimeError(f"ffmpeg capture failed for AUDIO_DEVICE={device_selector}: {err_text}") from e
         return
 
     arecord_cmd = [
@@ -352,12 +442,13 @@ class SubtitleDaemon:
 def record_and_transcribe(daemon: SubtitleDaemon, whisper_bin: str, model_path: str, source_language: str, chunk_seconds: int):
     # continuous loop: record short chunks and call whisper.cpp --translate
     last_line_norm = ""
+    audio_device = get_effective_audio_device()
     while True:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             wav_path = tmp.name
         try:
             # record short chunk mono 16k (platform-aware)
-            record_chunk_to_wav(wav_path, duration_sec=chunk_seconds)
+            record_chunk_to_wav(wav_path, duration_sec=chunk_seconds, audio_device=audio_device)
         except (subprocess.CalledProcessError, RuntimeError) as e:
             print("audio capture failed; check device/tooling:", e)
             time.sleep(1)
@@ -394,10 +485,16 @@ def record_and_transcribe(daemon: SubtitleDaemon, whisper_bin: str, model_path: 
 
 
 def live_translate_no_overlay(whisper_bin: str, model_path: str, source_language: str, chunk_seconds: int, emit_json: bool):
+    audio_device = get_effective_audio_device()
     print(
-        f"Live translation (no overlay) started. Listening on AUDIO_DEVICE={AUDIO_DEVICE}, "
+        f"Live translation (no overlay) started. Listening on AUDIO_DEVICE={audio_device}, "
         f"chunk={chunk_seconds}s, source_language={source_language}."
     )
+    if IS_MACOS:
+        print(
+            "macOS tip: ensure this app has Microphone permission in "
+            "System Settings > Privacy & Security > Microphone."
+        )
     last_line_norm = ""
     last_capture_error = ""
     repeated_capture_error_count = 0
@@ -407,7 +504,7 @@ def live_translate_no_overlay(whisper_bin: str, model_path: str, source_language
             wav_path = tmp.name
         try:
             emit_status("recording", emit_json)
-            record_chunk_to_wav(wav_path, duration_sec=chunk_seconds)
+            record_chunk_to_wav(wav_path, duration_sec=chunk_seconds, audio_device=audio_device)
         except (subprocess.CalledProcessError, RuntimeError) as e:
             err_text = str(e)
             if err_text == last_capture_error:
@@ -418,6 +515,11 @@ def live_translate_no_overlay(whisper_bin: str, model_path: str, source_language
 
             if repeated_capture_error_count == 1 or repeated_capture_error_count % 10 == 0:
                 print("audio capture failed; check device/tooling:", err_text)
+                if IS_MACOS:
+                    print(
+                        "macOS hint: set Audio Device to a valid :<index> (for MacBook Air mic often :2), "
+                        "then confirm Microphone permission for this app."
+                    )
             time.sleep(1)
             emit_status("ready", emit_json)
             continue

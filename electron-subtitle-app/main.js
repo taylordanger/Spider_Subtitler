@@ -3,6 +3,32 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 
+function chooseMacAudioInput(audioInputs) {
+  if (!Array.isArray(audioInputs) || !audioInputs.length) {
+    return null;
+  }
+
+  const preferred = [/built[- ]?in/i, /internal microphone/i, /macbook.*microphone/i];
+  const excluded = [/blackhole/i, /loopback/i, /capture screen/i];
+  const isExcluded = (name) => excluded.some((pattern) => pattern.test(name));
+
+  for (const device of audioInputs) {
+    const name = String(device?.name || '');
+    if (name && !isExcluded(name) && preferred.some((pattern) => pattern.test(name))) {
+      return device;
+    }
+  }
+
+  for (const device of audioInputs) {
+    const name = String(device?.name || '');
+    if (name && !isExcluded(name)) {
+      return device;
+    }
+  }
+
+  return audioInputs[0];
+}
+
 let mainWindow = null;
 let pyProc = null;
 let currentSubtitle = '';
@@ -56,18 +82,23 @@ function listAudioDevices() {
         continue;
       }
 
-      const match = line.match(/\[(\d+)\]\s+(.+)$/);
+      const match = line.match(/.*\[(\d+)\]\s+(.+)$/);
       if (match) {
         audioInputs.push({ index: match[1], name: match[2] });
       }
     }
+
+    const chosen = chooseMacAudioInput(audioInputs);
 
     return {
       ok: true,
       platform,
       ffmpegBin,
       audioInputs,
-      hint: 'Use AVFoundation audio selector format :<index> (example: :0, :1).'
+      recommendedAudioDevice: chosen ? `:${chosen.index}` : undefined,
+      hint: chosen
+        ? `Use AVFoundation audio selector format :<index>. Recommended: :${chosen.index} (${chosen.name}).`
+        : 'Use AVFoundation audio selector format :<index>.'
     };
   }
 

@@ -78,11 +78,13 @@ function loadConfig() {
   }
   try {
     const cfg = JSON.parse(raw);
+    const savedAudioDevice = String(cfg.audioDevice || '').trim();
+    const normalizedAudioDevice = savedAudioDevice === ':0' ? 'auto' : (savedAudioDevice || 'auto');
     whisperBinInput.value = cfg.whisperBin || '';
     modelPathInput.value = cfg.modelPath || '';
-    audioDeviceInput.value = cfg.audioDevice || ':0';
+    audioDeviceInput.value = normalizedAudioDevice;
     if (audioPresetInput) {
-      audioPresetInput.value = cfg.audioDevice || 'custom';
+      audioPresetInput.value = normalizedAudioDevice;
       if (!Array.from(audioPresetInput.options).some((opt) => opt.value === audioPresetInput.value)) {
         audioPresetInput.value = 'custom';
       }
@@ -102,7 +104,7 @@ function getConfig() {
   return {
     whisperBin: whisperBinInput.value.trim(),
     modelPath: modelPathInput.value.trim(),
-    audioDevice: audioDeviceInput.value.trim() || ':0',
+    audioDevice: audioDeviceInput.value.trim() || 'auto',
     sourceLanguage: sourceLanguageInput.value.trim() || 'ja',
     chunkSeconds: Number(chunkSecondsInput.value || '4'),
     minAudioRms: Number(minAudioRmsInput.value || '250'),
@@ -144,6 +146,9 @@ listAudioBtn?.addEventListener('click', async () => {
       result.audioInputs.forEach((input) => {
         appendLog(`  :${input.index}  ${input.name}`);
       });
+      if (result.recommendedAudioDevice) {
+        appendLog(`Recommended selector: ${result.recommendedAudioDevice}`);
+      }
       appendLog('Set Audio Device to one of the :<index> values above.');
       return;
     }
