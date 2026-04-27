@@ -190,6 +190,7 @@ def record_chunk_to_wav(wav_path: str, duration_sec: int = 2, audio_device: Opti
             "16000",
             "-af",
             # Favor speech band and attenuate low/high music-heavy regions.
+            # adjust or remove the filter for your use case; you may want to be careful with this one because it can cause more hallucinations if the frequency cutoffs are too aggressive or not well-suited to the content.
             "highpass=f=120,lowpass=f=3600" if ENABLE_SPEECH_FILTER else "anull",
             "-y",
             wav_path,
