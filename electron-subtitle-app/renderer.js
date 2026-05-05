@@ -15,12 +15,20 @@ const listAudioBtn = document.getElementById('listAudioBtn');
 const sourceLanguageInput = document.getElementById('sourceLanguage');
 const chunkSecondsInput = document.getElementById('chunkSeconds');
 const minAudioRmsInput = document.getElementById('minAudioRms');
+const minAudioRmsValue = document.getElementById('minAudioRmsValue');
+const enableSpeechFilterInput = document.getElementById('enableSpeechFilter');
 const pythonPathInput = document.getElementById('pythonPath');
 const resemblyThreshInput = document.getElementById('resemblyThresh');
 const whisperTimeoutInput = document.getElementById('whisperTimeout');
 const loadSrtBtn = document.getElementById('loadSrtBtn');
+const forceLiveBtn = document.getElementById('forceLiveBtn');
 const srtFileInput = document.getElementById('srtFileInput');
 const srtThreshInput = document.getElementById('srtThresh');
+const srtSyncStatus = document.getElementById('srtSyncStatus');
+const openSubtitlesQueryInput = document.getElementById('openSubtitlesQuery');
+const openSubtitlesApiKeyInput = document.getElementById('openSubtitlesApiKey');
+const youtubeIdInput = document.getElementById('youtubeId');
+const subtitleLangInput = document.getElementById('subtitleLang');
 
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
@@ -28,8 +36,20 @@ const theaterBtn = document.getElementById('theaterBtn');
 const resetHistoryBtn = document.getElementById('resetHistoryBtn');
 const saveSessionBtn = document.getElementById('saveSessionBtn');
 
-const LS_KEY = 'laserdisc-subtitles-config-v1';
+const LS_KEY = 'laserdisc-subtitles-config-v2';
 const LS_THEATER_KEY = 'laserdisc-subtitles-theater-mode-v1';
+
+/* Slider sync for minAudioRms */
+if (minAudioRmsInput) {
+  minAudioRmsInput.addEventListener('input', (e) => {
+    minAudioRmsValue.value = e.target.value;
+  });
+}
+if (minAudioRmsValue) {
+  minAudioRmsValue.addEventListener('change', (e) => {
+    minAudioRmsInput.value = e.target.value;
+  });
+}
 /* state function  */
 function setStatus(stage) {
   const safe = (stage || 'idle').toLowerCase();
@@ -92,9 +112,15 @@ function loadConfig() {
     sourceLanguageInput.value = cfg.sourceLanguage || 'ja';
     chunkSecondsInput.value = cfg.chunkSeconds || 4;
     minAudioRmsInput.value = cfg.minAudioRms || 250;
+    minAudioRmsValue.value = cfg.minAudioRms || 250;
+    enableSpeechFilterInput.checked = cfg.enableSpeechFilter !== false;
     pythonPathInput.value = cfg.pythonPath || 'python3';
     resemblyThreshInput.value = cfg.resemblyThresh || 0.72;
     whisperTimeoutInput.value = cfg.whisperTimeout || 30;
+    openSubtitlesQueryInput.value = cfg.openSubtitlesQuery || '';
+    openSubtitlesApiKeyInput.value = cfg.openSubtitlesApiKey || '';
+    youtubeIdInput.value = cfg.youtubeId || '';
+    subtitleLangInput.value = cfg.subtitleLang || 'en';
   } catch (err) {
     appendLog(`Failed to load saved config: ${err}`);
   }
@@ -108,9 +134,14 @@ function getConfig() {
     sourceLanguage: sourceLanguageInput.value.trim() || 'ja',
     chunkSeconds: Number(chunkSecondsInput.value || '4'),
     minAudioRms: Number(minAudioRmsInput.value || '250'),
-    pythonPath: pythonPathInput.value.trim() || 'python3'
-    ,resemblyThresh: Number(resemblyThreshInput.value || '0.72')
-    ,whisperTimeout: Number(whisperTimeoutInput.value || '30')
+    enableSpeechFilter: enableSpeechFilterInput.checked,
+    pythonPath: pythonPathInput.value.trim() || 'python3',
+    resemblyThresh: Number(resemblyThreshInput.value || '0.72'),
+    whisperTimeout: Number(whisperTimeoutInput.value || '30'),
+    openSubtitlesQuery: openSubtitlesQueryInput.value.trim(),
+    openSubtitlesApiKey: openSubtitlesApiKeyInput.value.trim(),
+    youtubeId: youtubeIdInput.value.trim(),
+    subtitleLang: subtitleLangInput.value.trim() || 'en'
   };
 }
 /* saves the configuration */
@@ -171,8 +202,13 @@ startBtn.addEventListener('click', async () => {
     appendLog('Set Whisper Binary and Model Path first.');
     return;
   }
+  srtSessionStartMs = Date.now();
+  srtSyncOffsetSec = null;
+  srtSyncConfidence = 0;
+  srtForceLiveFallback = false;
   saveConfig(cfg);
   setStatus('starting');
+  updateSrtSyncStatus();
   appendLog('Starting subtitle engine...');
   await window.subtitleApp.start(cfg);
 });
@@ -199,6 +235,10 @@ let recentHighRmsEmptyCount = 0;
 let musicAnnounced = false;
 let srtEntries = [];
 let srtThreshold = Number(srtThreshInput?.value || 0.7);
+let srtSessionStartMs = 0;
+let srtSyncOffsetSec = null;
+let srtSyncConfidence = 0;
+let srtForceLiveFallback = false;
 // Adaptive RMS (EMA) for dynamic thresholding
 let rmsEma = 0;
 const RMS_EMA_ALPHA = 0.08;        // smoothing factor (lower = smoother)
@@ -226,9 +266,64 @@ function parseSrt(content) {
       textLines = lines.slice(idx);
     }
     const txt = textLines.join(' ').replace(/\s+/g,' ').trim();
-    if (txt) entries.push({text: txt});
+    if (txt) {
+      entries.push({
+        start: m ? parseSrtTimestamp(m[1]) : 0,
+        end: m ? parseSrtTimestamp(m[2]) : 0,
+        text: txt
+      });
+    }
   }
   return entries;
+}
+
+function parseSrtTimestamp(value) {
+  const match = String(value || '').trim().match(/(\d{2}):(\d{2}):(\d{2})(?:[,.](\d{1,3}))?/);
+  if (!match) return 0;
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  const milliseconds = Number(String(match[4] || '0').padEnd(3, '0'));
+  return hours * 3600 + minutes * 60 + seconds + (milliseconds / 1000);
+}
+
+function subtitleForTime(entries, elapsedSeconds) {
+  if (!entries.length) return null;
+  const target = Number(elapsedSeconds || 0);
+  let current = null;
+  for (const entry of entries) {
+    if (entry.start <= target) {
+      current = entry;
+      continue;
+    }
+    break;
+  }
+  return current;
+}
+
+function updateSrtSyncStatus() {
+  if (!srtSyncStatus) return;
+  const pieces = [];
+  if (!srtEntries.length) {
+    pieces.push('SRT sync idle');
+  } else if (srtForceLiveFallback) {
+    pieces.push('SRT sync paused');
+  } else {
+    pieces.push(`SRT confidence ${Math.round(srtSyncConfidence * 100)}%`);
+  }
+  if (srtSyncOffsetSec != null && !srtForceLiveFallback) {
+    pieces.push(`offset ${srtSyncOffsetSec >= 0 ? '+' : ''}${srtSyncOffsetSec.toFixed(2)}s`);
+  }
+  srtSyncStatus.textContent = pieces.join(' · ');
+  if (forceLiveBtn) {
+    forceLiveBtn.textContent = srtForceLiveFallback ? 'Resume SRT Sync' : 'Force Live Fallback';
+  }
+}
+
+function setSrtForceLiveFallback(enabled) {
+  srtForceLiveFallback = Boolean(enabled);
+  updateSrtSyncStatus();
+  appendLog(srtForceLiveFallback ? 'SRT sync paused; using live fallback text' : 'SRT sync resumed');
 }
 /* Compute Levenshtein distance between two strings */
 function levenshtein(a, b) {
@@ -278,6 +373,13 @@ saveSessionBtn?.addEventListener('click', async () => {
 });
 
 loadSrtBtn?.addEventListener('click', () => srtFileInput?.click());
+forceLiveBtn?.addEventListener('click', () => {
+  if (!srtEntries.length) {
+    appendLog('Load an SRT file before using live fallback control');
+    return;
+  }
+  setSrtForceLiveFallback(!srtForceLiveFallback);
+});
 srtFileInput?.addEventListener('change', (ev) => {
   const f = ev.target.files && ev.target.files[0];
   if (!f) return;
@@ -285,6 +387,11 @@ srtFileInput?.addEventListener('change', (ev) => {
   reader.onload = () => {
     try {
       srtEntries = parseSrt(String(reader.result || ''));
+      srtSyncOffsetSec = null;
+      srtSyncConfidence = 0;
+      srtSessionStartMs = 0;
+      srtForceLiveFallback = false;
+      updateSrtSyncStatus();
       appendLog(`Loaded SRT entries: ${srtEntries.length}`);
     } catch (e) {
       appendLog(`Failed to parse SRT: ${e}`);
@@ -296,29 +403,60 @@ srtFileInput?.addEventListener('change', (ev) => {
 srtThreshInput?.addEventListener('change', () => {
   srtThreshold = Number(srtThreshInput.value || 0.7);
   appendLog(`SRT match threshold set to ${srtThreshold}`);
+  updateSrtSyncStatus();
 });
 
 window.subtitleApp.onSubtitle((text) => {
+  if (!srtSessionStartMs) {
+    srtSessionStartMs = Date.now();
+  }
+  const elapsedSeconds = Math.max(0, (Date.now() - srtSessionStartMs) / 1000);
+
   // Display a cleaned version in the main subtitle area (remove timestamps)
   const cleanedRaw = stripTimestamps(String(text || ''));
   const cleanedNoYT = stripYouTubeSayings(cleanedRaw);
   // Remove any existing "Speaker N:" labels anywhere to avoid double-labeling
   const cleaned = String(cleanedNoYT).replace(/\bSpeaker\s*\d+\s*:\s*/gi, '');
-  // If SRT loaded, try to match and prefer SRT canonical text when similar
+  // If SRT loaded, use microphone transcription to estimate where we are in the file.
   let srtMatched = null;
-  if (srtEntries && srtEntries.length) {
+  let syncLocked = false;
+  if (srtEntries && srtEntries.length && !srtForceLiveFallback) {
     let best = {score: 0, entry: null};
     for (const e of srtEntries) {
       const s = similarity(cleaned, e.text);
       if (s > best.score) best = {score: s, entry: e};
     }
     if (best.entry && best.score >= srtThreshold) {
-      // Strip any speaker labels from SRT canonical text as well (global)
-      srtMatched = String(best.entry.text).replace(/\bSpeaker\s*\d+\s*:\s*/gi, '');
-      // Remove YouTube auto-caption phrases from SRT canonical text too
-      srtMatched = stripYouTubeSayings(srtMatched);
+      const candidateOffset = best.entry.start - elapsedSeconds;
+      srtSyncOffsetSec = srtSyncOffsetSec == null
+        ? candidateOffset
+        : (srtSyncOffsetSec * 0.8) + (candidateOffset * 0.2);
+      srtSyncConfidence = Math.min(1, srtSyncConfidence + 0.25);
+
+      const syncedTime = elapsedSeconds + srtSyncOffsetSec;
+      const active = subtitleForTime(srtEntries, syncedTime);
+      if (active) {
+        srtMatched = String(active.text).replace(/\bSpeaker\s*\d+\s*:\s*/gi, '');
+        srtMatched = stripYouTubeSayings(srtMatched);
+        syncLocked = true;
+      } else {
+        srtMatched = String(best.entry.text).replace(/\bSpeaker\s*\d+\s*:\s*/gi, '');
+        srtMatched = stripYouTubeSayings(srtMatched);
+      }
+      if (srtSyncConfidence >= 0.5) {
+        appendLog(`SRT sync updated (offset ${srtSyncOffsetSec.toFixed(2)}s, score ${best.score.toFixed(2)})`);
+      }
+    }
+    if (!syncLocked && srtSyncOffsetSec != null && srtSyncConfidence >= 0.35) {
+      const syncedTime = elapsedSeconds + srtSyncOffsetSec;
+      const active = subtitleForTime(srtEntries, syncedTime);
+      if (active) {
+        srtMatched = String(active.text).replace(/\bSpeaker\s*\d+\s*:\s*/gi, '');
+        srtMatched = stripYouTubeSayings(srtMatched);
+      }
     }
   }
+  updateSrtSyncStatus();
   const norm = normalizeTextForSpeaker(cleaned);
   if (!norm) {
     // possible music/background; if already announced, keep showing it

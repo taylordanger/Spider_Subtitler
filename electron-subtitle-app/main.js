@@ -201,6 +201,20 @@ function startPython(config) {
     '--emit-json'
   ];
 
+  if (config.openSubtitlesQuery && String(config.openSubtitlesQuery).trim()) {
+    args.push('--opensubtitles-query', String(config.openSubtitlesQuery).trim());
+    args.push('--subtitle-lang', String(config.subtitleLang || 'en').trim() || 'en');
+    mainWindow?.webContents.send('subtitle:log', `Searching OpenSubtitles for: ${String(config.openSubtitlesQuery).trim()}`);
+  }
+
+  if (config.youtubeId && String(config.youtubeId).trim()) {
+    const youtubeId = String(config.youtubeId).trim();
+    const subtitleLang = String(config.subtitleLang || 'en').trim() || 'en';
+    mainWindow?.webContents.send('subtitle:log', `Using YouTube subtitle source: ${youtubeId} (${subtitleLang})`);
+    args.push('--youtube-id', youtubeId);
+    args.push('--subtitle-lang', subtitleLang);
+  }
+
   // Determine a working python executable. Try configured path, env var, then common names.
   const candidates = Array.from(new Set([
     config.pythonPath,
@@ -242,7 +256,8 @@ function startPython(config) {
       AUDIO_DEVICE: config.audioDevice,
       MIN_AUDIO_RMS: String(config.minAudioRms || 250),
       RESEMBLY_SIM_THRESH: String(typeof config.resemblyThresh !== 'undefined' ? config.resemblyThresh : '0.72'),
-      WHISPER_TIMEOUT: String(typeof config.whisperTimeout !== 'undefined' ? config.whisperTimeout : '30')
+      WHISPER_TIMEOUT: String(typeof config.whisperTimeout !== 'undefined' ? config.whisperTimeout : '30'),
+      OPENSUBTITLES_API_KEY: String(config.openSubtitlesApiKey || process.env.OPENSUBTITLES_API_KEY || '')
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });

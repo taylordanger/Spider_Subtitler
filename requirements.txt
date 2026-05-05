@@ -2,3 +2,10 @@ PyGObject>=3.36.0
 PyAudio>=0.2.11
 SpeechRecognition>=3.14.2
 Gstreamer>=1.18.0
+
+# Optional: For subtitle fetching from YouTube
+# yt-dlp>=2024.0.0
+# youtube-transcript-api>=0.6.2
+
+# Optional: For subtitle syncing to video
+# ffsubsync>=0.4.8

@@ -7,13 +7,18 @@ import time
 import argparse
 import platform
 import shutil
+import io
 import json
 import wave
 import struct
 import math
 import re
+import difflib
+import urllib.request
+import urllib.parse
+import zipfile
 from functools import lru_cache
-from typing import Any, Optional, cast
+from typing import Any, Optional, cast, List, Dict
 
 IS_MACOS = platform.system() == "Darwin"
 
@@ -41,6 +46,8 @@ FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 ENABLE_SPEECH_FILTER = os.environ.get("ENABLE_SPEECH_FILTER", "1") == "1"
 VAD_MODEL_PATH = os.environ.get("VAD_MODEL_PATH", "").strip()
 VAD_THRESHOLD = os.environ.get("VAD_THRESHOLD", "0.6")
+SUBTITLE_LANG = os.environ.get("SUBTITLE_LANG", "en")  # Language for fetched subtitles
+OPENSUBTITLES_API_KEY = os.environ.get("OPENSUBTITLES_API_KEY", "").strip()
 
 
 def resolve_ffmpeg_binary() -> str:
@@ -189,9 +196,11 @@ def record_chunk_to_wav(wav_path: str, duration_sec: int = 2, audio_device: Opti
             "-ar",
             "16000",
             "-af",
-            # Favor speech band and attenuate low/high music-heavy regions.
-            # adjust or remove the filter for your use case; you may want to be careful with this one because it can cause more hallucinations if the frequency cutoffs are too aggressive or not well-suited to the content.
-            "highpass=f=120,lowpass=f=3600" if ENABLE_SPEECH_FILTER else "anull",
+            # Balanced speech filter: preserve female voices while reducing music.
+            # highpass=80: preserve female voice fundamentals and male voice clarity
+            # lowpass=8000: keep full speech spectrum including sibilants
+            # volume/alimiter: raise quiet speech gently without clipping
+            "highpass=f=80,lowpass=f=8000,volume=1.25,alimiter=limit=0.95" if ENABLE_SPEECH_FILTER else "anull",
             "-y",
             wav_path,
         ]
@@ -247,6 +256,64 @@ def build_whisper_cmd(whisper_bin: str, model_path: str, wav_path: str, source_l
 
 def normalize_line(text: str) -> str:
     return " ".join(text.strip().lower().split())
+
+
+def text_similarity(a: str, b: str) -> float:
+    """Calculate similarity between two strings (0.0 to 1.0)."""
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def contains_repeated_chars(text: str, min_repeats: int = 3) -> bool:
+    """Detect patterns like 'ああああ' or 'hahaha' that indicate hallucination."""
+    # Check for repeated ASCII characters
+    for char in set(text):
+        if text.count(char) >= min_repeats and char.isalpha():
+            # Check if they're consecutive
+            pattern = char * min_repeats
+            if pattern in text:
+                return True
+    return False
+
+
+def is_likely_hallucination_pattern(text: str) -> bool:
+    """Detect common hallucination patterns beyond the known list."""
+    norm = normalize_line(text)
+    words = norm.split()
+    
+    # Reject very short lines (often garbage)
+    if len(norm) < 3:
+        return True
+    
+    # Reject single character repetitions
+    if contains_repeated_chars(norm):
+        return True
+    
+    # Reject lines that are mostly numbers/special chars
+    if sum(1 for c in norm if c.isalnum()) < len(norm) * 0.3:
+        return True
+    
+    # Reject lines with excessive punctuation
+    if sum(1 for c in norm if c in '.,!?;:') > len(words):
+        return True
+    
+    # Detect music/instrumental patterns
+    music_patterns = {
+        "♪", "♫", "la la", "lala", "doo doo", "dododo", "tra la", 
+        "nanana", "da da", "boom boom", "beep", "boop",
+        "instrumental", "music", "theme", "bgm"
+    }
+    if any(pattern in norm for pattern in music_patterns):
+        return True
+    
+    # Common filler words in English transcription
+    filler_patterns = {
+        "um", "uh", "err", "erm", "hmm", "ah", "oh", "so", "like", "you know",
+        "i mean", "just", "basically", "essentially", "literally"
+    }
+    if norm in filler_patterns and len(words) == 1:
+        return True
+    
+    return False
 
 
 def should_skip_line(text: str, last_line_norm: str):
@@ -308,14 +375,29 @@ def should_skip_line(text: str, last_line_norm: str):
         "Please like this video and subscribe!",
         "Please like this video."
     }
+    
+    # Check exact match in known hallucinations
     if norm in known_hallucinations:
         return True, norm
+    
+    # Check for common hallucination patterns
+    if is_likely_hallucination_pattern(norm):
+        return True, norm
+    
+    # Check for variations of subscription/watching messages
     if "thank you for watching" in norm:
         return True, norm
     if "subscribe" in norm and len(norm.split()) <= 8:
         return True, norm
+    
+    # Skip exact duplicates
     if norm == last_line_norm:
         return True, norm
+    
+    # Skip if too similar to last line (>85% similarity)
+    if last_line_norm and text_similarity(norm, last_line_norm) > 0.85:
+        return True, norm
+    
     return False, norm
 
 
@@ -397,6 +479,320 @@ def resolve_whisper_binary(whisper_bin: str) -> str:
         f"whisper binary not found: {whisper_bin}. "
         "Set --whisper-bin to the full path, e.g. /Users/<you>/whisper.cpp/build/bin/whisper-cli"
     )
+
+
+def normalize_youtube_video_id(value: str) -> str:
+    raw_value = str(value or '').strip()
+    if not raw_value:
+        return ''
+
+    match = re.search(r'(?:v=|youtu\.be/|shorts/)([A-Za-z0-9_-]{6,})', raw_value)
+    if match:
+        return match.group(1)
+
+    if raw_value.startswith('http://') or raw_value.startswith('https://'):
+        parsed = urllib.parse.urlparse(raw_value)
+        query_id = urllib.parse.parse_qs(parsed.query).get('v', [''])[0].strip()
+        if query_id:
+            return query_id
+        path_parts = [part for part in parsed.path.split('/') if part]
+        if path_parts:
+            last_part = path_parts[-1].split('?')[0].split('&')[0].strip()
+            if last_part:
+                return last_part
+
+    return raw_value
+
+
+def fetch_subtitles_from_youtube(video_id: str, lang: str = "en") -> Optional[str]:
+    """Fetch subtitles from YouTube using yt-dlp."""
+    video_id = normalize_youtube_video_id(video_id)
+    print(f"[info] Fetching YouTube subtitles for video_id={video_id}, lang={lang}")
+    try:
+        import yt_dlp
+    except ImportError:
+        print("[warning] yt-dlp not installed. Install with: pip install yt-dlp")
+        yt_dlp = None
+    
+    if yt_dlp is not None:
+        try:
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'skip_download': True,
+                'writesubtitles': True,
+                'writeautomaticsub': True,
+                'subtitleslangs': [lang],
+                'outtmpl': tempfile.gettempdir() + '/%(title)s.%(ext)s',
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
+                print(f"[info] YouTube video title: {info.get('title', 'unknown')}")
+                # Look for subtitle file
+                for ext in ['vtt', 'srt']:
+                    subtitle_file = f"{tempfile.gettempdir()}/{info['title']}.{lang}.{ext}"
+                    if os.path.exists(subtitle_file):
+                        print(f"[info] Found subtitle file: {subtitle_file}")
+                        return subtitle_file
+                print(f"[warning] No subtitle file found for video_id={video_id} and lang={lang}")
+        except Exception as e:
+            err_text = str(e)
+            print(f"[warning] Failed to fetch subtitles from YouTube: {e}")
+            if '429' not in err_text and 'Too Many Requests' not in err_text:
+                return None
+
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+    except ImportError:
+        print("[warning] youtube-transcript-api not installed. Install with: pip install youtube-transcript-api")
+        return None
+
+    try:
+        transcript_list = YouTubeTranscriptApi().list(video_id)
+        transcript = None
+        try:
+            transcript = transcript_list.find_transcript([lang]).fetch()
+        except Exception:
+            try:
+                transcript = transcript_list.find_generated_transcript([lang]).fetch()
+            except Exception:
+                try:
+                    transcript = transcript_list.find_manually_created_transcript([lang]).fetch()
+                except Exception:
+                    if transcript_list:
+                        try:
+                            transcript = transcript_list.find_transcript([
+                                getattr(entry, 'language_code', '')
+                                for entry in transcript_list
+                                if getattr(entry, 'language_code', '')
+                            ]).fetch()
+                        except Exception:
+                            transcript = None
+
+        if not transcript:
+            print(f"[warning] No transcript returned for video_id={video_id} and lang={lang}")
+            return None
+
+        safe_video_id = re.sub(r'[^A-Za-z0-9_-]+', '_', video_id)
+        subtitle_file = os.path.join(tempfile.gettempdir(), f"{safe_video_id}.{lang}.srt")
+        with open(subtitle_file, 'w', encoding='utf-8') as f:
+            for index, entry in enumerate(transcript, start=1):
+                start_seconds = float(getattr(entry, 'start', 0.0) or 0.0)
+                duration_seconds = float(getattr(entry, 'duration', 0.0) or 0.0)
+                end_seconds = start_seconds + duration_seconds
+                start_time = time.strftime('%H:%M:%S', time.gmtime(start_seconds)) + f",{int((start_seconds % 1) * 1000):03d}"
+                end_time = time.strftime('%H:%M:%S', time.gmtime(end_seconds)) + f",{int((end_seconds % 1) * 1000):03d}"
+                text = str(getattr(entry, 'text', '') or '').replace('\n', ' ').strip()
+                f.write(f"{index}\n{start_time} --> {end_time}\n{text}\n\n")
+
+        print(f"[info] Fallback transcript API saved subtitle file: {subtitle_file}")
+        return subtitle_file
+    except Exception as e:
+        print(f"[warning] youtube-transcript-api fallback failed: {e}")
+    return None
+
+
+def _request_json(method: str, url: str, headers: Optional[Dict[str, str]] = None, payload: Optional[Dict[str, Any]] = None):
+    request_headers = headers.copy() if headers else {}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode('utf-8')
+        request_headers['Content-Type'] = 'application/json'
+
+    request = urllib.request.Request(url, data=data, headers=request_headers, method=method)
+    with urllib.request.urlopen(request, timeout=45) as response:
+        raw = response.read().decode('utf-8', errors='replace')
+        return json.loads(raw), response.headers
+
+
+def _download_subtitle_asset(download_url: str, subtitle_id: str, lang: str) -> Optional[str]:
+    print(f"[info] Downloading OpenSubtitles asset for subtitle_id={subtitle_id}")
+    try:
+        request = urllib.request.Request(
+            download_url,
+            headers={'User-Agent': 'Spider Subtitler/0.2'}
+        )
+        with urllib.request.urlopen(request, timeout=60) as response:
+            content = response.read()
+            content_type = (response.headers.get('Content-Type') or '').lower()
+    except Exception as e:
+        print(f"[warning] OpenSubtitles download failed: {e}")
+        return None
+
+    safe_id = re.sub(r'[^A-Za-z0-9_-]+', '_', subtitle_id or 'opensubtitles')
+    base_name = f"{safe_id}.{lang}"
+    temp_dir = tempfile.gettempdir()
+
+    if zipfile.is_zipfile(io.BytesIO(content)) or 'zip' in content_type:
+        zip_path = os.path.join(temp_dir, f"{base_name}.zip")
+        with open(zip_path, 'wb') as f:
+            f.write(content)
+
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as archive:
+                for member in archive.namelist():
+                    member_lower = member.lower()
+                    if member_lower.endswith('.srt') or member_lower.endswith('.vtt'):
+                        extracted_path = os.path.join(temp_dir, f"{base_name}{os.path.splitext(member)[1]}")
+                        with archive.open(member) as source, open(extracted_path, 'wb') as target:
+                            target.write(source.read())
+                        print(f"[info] OpenSubtitles subtitle extracted to: {extracted_path}")
+                        return extracted_path
+        except Exception as e:
+            print(f"[warning] Failed to extract OpenSubtitles archive: {e}")
+            return None
+
+    subtitle_path = os.path.join(temp_dir, f"{base_name}.srt")
+    with open(subtitle_path, 'wb') as f:
+        f.write(content)
+    print(f"[info] OpenSubtitles subtitle saved to: {subtitle_path}")
+    return subtitle_path
+
+
+def fetch_subtitles_from_opensubtitles(query: str, lang: str = "en", api_key: str = "") -> Optional[str]:
+    query = str(query or '').strip()
+    if not query:
+        return None
+
+    api_key = str(api_key or OPENSUBTITLES_API_KEY).strip()
+    if not api_key:
+        print("[warning] OpenSubtitles API key not set. Set OPENSUBTITLES_API_KEY or enter it in the app.")
+        return None
+
+    print(f"[info] Searching OpenSubtitles for query={query!r}, lang={lang}")
+    headers = {
+        'Api-Key': api_key,
+        'Accept': 'application/json',
+        'User-Agent': 'Spider Subtitler/0.2'
+    }
+
+    try:
+        params = urllib.parse.urlencode({
+            'query': query,
+            'languages': lang,
+            'order_by': 'download_count',
+            'order_direction': 'desc'
+        })
+        payload, _ = _request_json('GET', f'https://api.opensubtitles.com/api/v1/subtitles?{params}', headers=headers)
+        results = payload.get('data') or []
+        if not results:
+            print(f"[warning] No OpenSubtitles search results for query={query!r} and lang={lang}")
+            return None
+
+        for index, result in enumerate(results[:5], start=1):
+            attributes = result.get('attributes') or {}
+            print(
+                f"[info] OpenSubtitles result {index}: "
+                f"id={result.get('id')} release={attributes.get('release') or attributes.get('feature_details', {}).get('title') or 'unknown'}"
+            )
+
+        best_match = results[0]
+        subtitle_id = str(best_match.get('id') or '').strip()
+        if not subtitle_id:
+            print("[warning] OpenSubtitles search returned a result without an id")
+            return None
+
+        # Try the download endpoint first. Some accounts/regions may require a bearer token,
+        # so we also fall back to any direct link-like field in the search payload.
+        download_link = None
+        try:
+            download_payload = {"file_id": subtitle_id}
+            download_response, _ = _request_json('POST', 'https://api.opensubtitles.com/api/v1/download', headers=headers, payload=download_payload)
+            download_link = (
+                download_response.get('link')
+                or (download_response.get('data') or {}).get('link')
+                or download_response.get('url')
+                or (download_response.get('data') or {}).get('url')
+            )
+            if download_link:
+                print(f"[info] OpenSubtitles download link acquired for subtitle_id={subtitle_id}")
+        except Exception as e:
+            print(f"[warning] OpenSubtitles download endpoint failed: {e}")
+
+        if not download_link:
+            attributes = best_match.get('attributes') or {}
+            download_link = (
+                attributes.get('download_link')
+                or attributes.get('url')
+                or attributes.get('files', [{}])[0].get('file_id')
+            )
+
+        if not download_link:
+            print("[warning] OpenSubtitles search succeeded but no downloadable link was available")
+            return None
+
+        return _download_subtitle_asset(str(download_link), subtitle_id, lang)
+    except Exception as e:
+        print(f"[warning] OpenSubtitles search failed: {e}")
+        return None
+
+
+def sync_subtitles_with_ffsubsync(video_file: str, subtitle_file: str) -> Optional[str]:
+    """Sync subtitle file to video using ffsubsync."""
+    try:
+        import ffsubsync
+    except ImportError:
+        print("[warning] ffsubsync not installed. Install with: pip install ffsubsync")
+        return None
+    
+    try:
+        synced_file = subtitle_file.replace('.srt', '_synced.srt')
+        subprocess.run(
+            ['ffsubsync', subtitle_file, '-i', video_file, '-o', synced_file],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE
+        )
+        return synced_file if os.path.exists(synced_file) else None
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        print(f"[warning] ffsubsync sync failed: {e}")
+    return None
+
+
+def parse_srt_file(srt_file: str) -> Dict[float, str]:
+    """Parse SRT subtitle file into dict {timestamp: text}."""
+    subtitles = {}
+    try:
+        with open(srt_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Split by double newlines to get subtitle blocks
+        blocks = content.strip().split('\n\n')
+        for block in blocks:
+            lines = block.strip().split('\n')
+            if len(lines) < 3:
+                continue
+            
+            # Parse timestamp line (e.g., "00:00:10,000 --> 00:00:15,000")
+            time_line = lines[1]
+            if '-->' not in time_line:
+                continue
+            
+            start_time_str = time_line.split('-->')[0].strip()
+            # Convert to seconds
+            try:
+                parts = start_time_str.replace(',', '.').split(':')
+                seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                text = ' '.join(lines[2:]).strip()
+                if text:
+                    subtitles[seconds] = text
+            except (ValueError, IndexError):
+                continue
+    except Exception as e:
+        print(f"[warning] Failed to parse subtitle file: {e}")
+    
+    return subtitles
+
+
+def get_current_subtitle(subtitles: Dict[float, str], elapsed_seconds: float) -> Optional[str]:
+    """Get subtitle text for current playback time."""
+    # Find the most recent subtitle before current time
+    valid_subs = [t for t in subtitles.keys() if t <= elapsed_seconds]
+    if not valid_subs:
+        return None
+    
+    closest_time = max(valid_subs)
+    return subtitles.get(closest_time)
 
 
 def validate_runtime_paths(whisper_bin: str, model_path: str):
@@ -583,7 +979,74 @@ def main():
     parser.add_argument("--chunk-seconds", type=int, default=2, help="Audio chunk duration in seconds for live mode (default: 2)")
     parser.add_argument("--no-overlay", action="store_true", help="Run live microphone translation without GStreamer subtitle overlay")
     parser.add_argument("--emit-json", action="store_true", help="Emit JSON lines for subtitle events")
+    
+    # Subtitle fetching and syncing options
+    parser.add_argument("--subtitle-file", metavar="PATH", help="Use existing SRT/VTT subtitle file instead of live transcription")
+    parser.add_argument("--opensubtitles-query", metavar="QUERY", help="Search OpenSubtitles by movie or episode title")
+    parser.add_argument("--opensubtitles-api-key", metavar="KEY", default=OPENSUBTITLES_API_KEY, help="OpenSubtitles API key (optional if set via env)")
+    parser.add_argument("--youtube-id", metavar="VIDEO_ID", help="Fetch subtitles from YouTube video ID")
+    parser.add_argument("--subtitle-lang", default=SUBTITLE_LANG, help="Language for fetched subtitles (default: en)")
+    parser.add_argument("--sync-video", metavar="VIDEO_FILE", help="Video file to sync subtitles with using ffsubsync")
+    
     args = parser.parse_args()
+
+    # Handle subtitle fetching from external sources.
+    if args.opensubtitles_query:
+        subtitle_file = fetch_subtitles_from_opensubtitles(args.opensubtitles_query, args.subtitle_lang, args.opensubtitles_api_key)
+        if subtitle_file:
+            args.subtitle_file = subtitle_file
+            print(f"✓ OpenSubtitles file saved to: {subtitle_file}")
+        else:
+            print(f"[warning] OpenSubtitles did not produce a subtitle file for query={args.opensubtitles_query!r}; trying the next source")
+
+    if args.youtube_id:
+        args.youtube_id = normalize_youtube_video_id(args.youtube_id)
+        print(f"Using YouTube video ID: {args.youtube_id}")
+        subtitle_file = fetch_subtitles_from_youtube(args.youtube_id, args.subtitle_lang)
+        if subtitle_file:
+            args.subtitle_file = subtitle_file
+            print(f"✓ Subtitles saved to: {subtitle_file}")
+        else:
+            print(f"[warning] YouTube subtitle fetch failed for ID: {args.youtube_id}, lang: {args.subtitle_lang}; continuing to live transcription")
+
+    # Handle subtitle file syncing
+    if args.subtitle_file and args.sync_video:
+        print(f"Syncing subtitles with video using ffsubsync...")
+        synced = sync_subtitles_with_ffsubsync(args.sync_video, args.subtitle_file)
+        if synced:
+            args.subtitle_file = synced
+            print(f"✓ Synced subtitles saved to: {synced}")
+        else:
+            print("✗ Subtitle syncing failed, using original file")
+
+    # If subtitle file provided, use it instead of live transcription
+    if args.subtitle_file:
+        if not os.path.exists(args.subtitle_file):
+            raise FileNotFoundError(f"Subtitle file not found: {args.subtitle_file}")
+        print(f"Using subtitle file: {args.subtitle_file}")
+        subtitles = parse_srt_file(args.subtitle_file)
+        if not subtitles:
+            print("✗ No subtitles found in file")
+            return
+        print(f"✓ Loaded {len(subtitles)} subtitle entries")
+        print("Subtitle display mode ready. Press Ctrl+C to exit.")
+        if args.emit_json:
+            emit_status("ready", True)
+        try:
+            elapsed = 0.0
+            last_subtitle = None
+            while True:
+                current_sub = get_current_subtitle(subtitles, elapsed)
+                if current_sub and current_sub != last_subtitle:
+                    emit_subtitle(current_sub, args.emit_json)
+                    last_subtitle = current_sub
+                time.sleep(0.1)
+                elapsed += 0.1
+        except KeyboardInterrupt:
+            pass
+        return
+
+    args.whisper_bin = validate_runtime_paths(args.whisper_bin, args.model)
 
     if args.test_translate:
         if not os.path.exists(args.test_translate):
@@ -593,8 +1056,6 @@ def main():
         translated = run_translate_once(args.test_translate, args.whisper_bin, args.model)
         print(translated)
         return
-
-    args.whisper_bin = validate_runtime_paths(args.whisper_bin, args.model)
 
     if args.no_overlay:
         print(f"Using whisper binary: {args.whisper_bin}")

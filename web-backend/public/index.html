@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spider Subtitler Web</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <header class="header">
+      <div class="header-content">
+        <h1>🕷️ Spider Subtitler</h1>
+        <div class="status-bar">
+          <div class="status-indicator" id="daemonStatus">●</div>
+          <span id="statusText">Connecting...</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="main">
+      <!-- Controls Panel -->
+      <aside class="sidebar">
+        <section class="panel controls-panel">
+          <h2>Controls</h2>
+          
+          <div class="button-group">
+            <button id="startBtn" class="btn btn-primary">▶️ Start</button>
+            <button id="stopBtn" class="btn btn-danger">⏹️ Stop</button>
+          </div>
+
+          <hr>
+
+          <h3>Audio Settings</h3>
+          
+          <div class="setting">
+            <label for="sourceLanguage">Source Language</label>
+            <select id="sourceLanguage">
+              <option value="ja">Japanese</option>
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="auto">Auto-detect</option>
+            </select>
+          </div>
+
+          <div class="setting">
+            <label for="chunkSeconds">Chunk Duration (seconds)</label>
+            <div class="range-group">
+              <input type="range" id="chunkSeconds" min="1" max="10" value="2">
+              <input type="number" id="chunkSecondsValue" min="1" max="10" value="2">
+            </div>
+          </div>
+
+          <div class="setting">
+            <label for="minAudioRms">Min Audio Level (RMS)</label>
+            <div class="range-group">
+              <input type="range" id="minAudioRms" min="50" max="500" value="250">
+              <input type="number" id="minAudioRmsValue" min="50" max="5000" value="250">
+            </div>
+          </div>
+
+          <div class="setting">
+            <label>
+              <input type="checkbox" id="enableSpeechFilter" checked>
+              Enable Speech Filter (↓ music, ↑ dialogue)
+            </label>
+          </div>
+
+          <hr>
+
+          <h3>Advanced: Subtitle Sources</h3>
+
+          <div class="setting">
+            <label for="openSubtitlesQuery">OpenSubtitles Title / Query</label>
+            <input type="text" id="openSubtitlesQuery" placeholder="e.g., My Hero Academia Season 1 Episode 3">
+          </div>
+
+          <div class="setting">
+            <label for="openSubtitlesApiKey">OpenSubtitles API Key</label>
+            <input type="password" id="openSubtitlesApiKey" placeholder="Optional if set in environment">
+          </div>
+
+          <div class="setting helper-text">
+            Searches OpenSubtitles first, then falls back to YouTube, then live mic.
+          </div>
+
+          <h3>Advanced: YouTube Subtitles</h3>
+
+          <div class="setting">
+            <label for="youtubeId">YouTube Video ID</label>
+            <input type="text" id="youtubeId" placeholder="e.g., jNQXAC9IVRw">
+          </div>
+
+          <div class="setting">
+            <label for="subtitleLang">Subtitle Language</label>
+            <select id="subtitleLang">
+              <option value="en">English</option>
+              <option value="ja">Japanese</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="zh">Chinese</option>
+            </select>
+          </div>
+
+          <button id="applyConfigBtn" class="btn btn-secondary">⚙️ Apply Settings</button>
+        </section>
+
+        <!-- Audio Level Meter -->
+        <section class="panel meter-panel">
+          <h3>Audio Level</h3>
+          <div class="meter-display">
+            <div class="meter-track">
+              <div id="meterFill" class="meter-fill"></div>
+            </div>
+            <span id="meterText">RMS: -- / --</span>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Subtitle Display -->
+      <section class="main-content">
+        <!-- Current Subtitle -->
+        <div class="panel subtitle-display">
+          <h2>Live Subtitle</h2>
+          <div id="subtitleText" class="subtitle-text">
+            Press Start to begin translation...
+          </div>
+        </div>
+
+        <!-- History -->
+        <div class="panel history-panel">
+          <div class="panel-header">
+            <h2>History</h2>
+            <button id="clearHistoryBtn" class="btn btn-small">🗑️ Clear</button>
+          </div>
+          <div id="historyContainer" class="history-list"></div>
+        </div>
+
+        <!-- Logs -->
+        <div class="panel logs-panel">
+          <h2>Logs</h2>
+          <pre id="logBox"></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Spider Subtitler Web • <a href="https://github.com/taylordanger/Spider_Subtitler" target="_blank">GitHub</a></p>
+    </footer>
+  </div>
+
+  <script src="client.js"></script>
+</body>
+</html>
